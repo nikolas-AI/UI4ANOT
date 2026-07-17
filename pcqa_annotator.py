@@ -15,7 +15,7 @@ MAIN_DIR = "./"
 ALLOWED_BLOCKS = {
     "LS_PCQA_block_files": ["block 1", "block 6", "block 7"],
     "Basics_block_files": ["block 1", "block 5", "block 6", "block 7"],
-    "Calibration": ["Calibration Set"]
+    "Calibration": ["Calibration_Set_Basics", "Calibration_Set_LS_PCQA"]
 }
 
 RATING_OPTIONS = ["None", "Low", "Medium", "High", "Severe"]
@@ -53,12 +53,14 @@ class PCQAAnnotatorUI:
         
         ttk.Label(frame_select, text="Dataset Group:").grid(row=0, column=0, sticky="w", pady=2)
         self.combo_group = ttk.Combobox(frame_select, values=list(ALLOWED_BLOCKS.keys()), state="readonly")
-        self.combo_group.grid(row=0, column=1, fill="x", pady=2)
+        # CHANGED: replaced fill="x" with sticky="ew"
+        self.combo_group.grid(row=0, column=1, sticky="ew", pady=2)
         self.combo_group.bind("<<ComboboxSelected>>", self.update_block_options)
         
         ttk.Label(frame_select, text="Specific Block:").grid(row=1, column=0, sticky="w", pady=2)
         self.combo_block = ttk.Combobox(frame_select, state="readonly")
-        self.combo_block.grid(row=1, column=1, fill="x", pady=2)
+        # CHANGED: replaced fill="x" with sticky="ew"
+        self.combo_block.grid(row=1, column=1, sticky="ew", pady=2)
         
         btn_load = ttk.Button(frame_select, text="Load Point Clouds", command=self.load_dataset)
         btn_load.grid(row=2, column=0, columnspan=2, pady=10)
@@ -134,32 +136,65 @@ class PCQAAnnotatorUI:
             messagebox.showwarning("Selection Missing", "Please select both a group and a block.")
             return
             
-        # Target Excel path for saving findings
+        # Target Excel path where your output annotations will be saved
         self.excel_save_path = os.path.join(MAIN_DIR, group, f"{block}_annotations.xlsx")
         
-        # Gather Distorted Point Clouds (PPC)
-        ppc_dir = os.path.join(MAIN_DIR, "PointClouds", "PPC")
-        self.ppc_files = sorted(glob.glob(os.path.join(ppc_dir, "*.ply")))
+        # 1. Determine the source CSV filename containing the researcher's block list
+        if group == "Calibration":
+            # This directly uses the block name (e.g., "Calibration_Set_Basics.csv")
+            csv_name = f"{block}.csv" 
+        else:
+            # For Basics and LS_PCQA, extract the number (e.g., "block 1" -> "1")
+            block_num = block.split()[-1] 
+            
+            if "LS_PCQA" in group:
+                csv_name = f"LS_PCQA_block_{block_num}.csv"
+            else:
+                csv_name = f"basics_block_{block_num}.csv"
+            
+        csv_path = os.path.join(MAIN_DIR, group, csv_name)
+        
+        if not os.path.exists(csv_path):
+            messagebox.showerror("Error", f"Could not find the block list file:\n{csv_path}")
+            return
+            
+        # 2. Read the CSV to get the list of files to annotate
+        try:
+            df_block_list = pd.read_csv(csv_path)
+            # Find the column containing the ply names (checks for 'Ply_name' or uses the 1st column)
+            ply_col = 'Ply_name' if 'Ply_name' in df_block_list.columns else df_block_list.columns[0]
+            
+            # Map the filenames to full paths inside the PointClouds/PPC directory
+            ppc_dir = os.path.join(MAIN_DIR, "PointClouds", "PPC")
+            
+            # Clean names and build full paths
+            self.ppc_files = [
+                os.path.join(ppc_dir, str(name).strip()) 
+                for name in df_block_list[ply_col].dropna().unique()
+            ]
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to read block CSV list:\n{str(e)}")
+            return
         
         if not self.ppc_files:
-            messagebox.showerror("Error", f"No .ply files found inside folder: {ppc_dir}")
+            messagebox.showerror("Error", "No point cloud files were found listed in that block CSV.")
             return
             
         self.current_index = 0
         
-        # Read existing annotations to pick up where we left off if needed
+        # 3. Read existing progress from the output Excel sheet to resume where you left off
         if os.path.exists(self.excel_save_path):
             try:
                 df_existing = pd.read_excel(self.excel_save_path)
                 annotated_names = df_existing["Ply_name"].astype(str).tolist()
-                # Advance pointer past already rated systems
+                
                 while self.current_index < len(self.ppc_files):
                     basename = os.path.basename(self.ppc_files[self.current_index])
                     if basename in annotated_names:
                         self.current_index += 1
                     else:
                         break
-            except Exception as e:
+            except Exception:
                 pass
                 
         self.btn_view.config(state="normal")
@@ -184,20 +219,21 @@ class PCQAAnnotatorUI:
         self.txt_desc.delete("1.0", tk.END)
 
     def find_reference_file(self, distorted_filename):
-        """
-        Tries to match the distorted file back to its source reference file.
-        Modify this method if your filenames don't share identical substrings.
-        """
         src_dir = os.path.join(MAIN_DIR, "PointClouds", "SRC")
-        src_files = glob.glob(os.path.join(src_dir, "*.ply"))
         
-        # Simple heuristic: Does the source filename show up within the distorted string?
-        for src_path in src_files:
-            src_base = os.path.splitext(os.path.basename(src_path))[0]
-            if src_base in distorted_filename:
-                return src_path
-                
-        # Fallback: Default to first file if naming matching strategy yields nothing
+        # Split "p01_geocnn_r01.ply" by the underscore. 
+        # [0] grabs the very first part: "p01"
+        expected_src_base = distorted_filename.split('_')[0]
+        
+        # Reconstruct the expected path: PointClouds/SRC/p01.ply
+        expected_src_path = os.path.join(src_dir, f"{expected_src_base}.ply")
+        
+        # If that exact file exists, return it
+        if os.path.exists(expected_src_path):
+            return expected_src_path
+            
+        # Fallback to the first available source file if something goes wrong
+        src_files = glob.glob(os.path.join(src_dir, "*.ply"))
         return src_files[0] if src_files else None
 
     def visualize_current(self):
