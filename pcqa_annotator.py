@@ -5,6 +5,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import open3d as o3d
 
+import ctypes
+try:
+    # This forces Tkinter to render sharply and prevents Open3D from shrinking it later
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    pass
+
 # ==========================================
 # CONFIGURATION & DIRECTORY CONSTANTS
 # ==========================================
@@ -37,12 +44,15 @@ class PCQAAnnotatorUI:
     def __init__(self, root):
         self.root = root
         self.root.title("PCQA Annotation Assistant")
-        self.root.geometry("500x750")
-        
+        # Added +10+10 to pin the Tkinter window to the top-left of your screen
+        self.root.geometry("520x780+10+10") 
+        self.root.minsize(670, 990) 
         self.ppc_files = []
         self.current_index = 0
         self.excel_save_path = ""
-        self.current_vis_data = None
+        
+        # Control flag to manage Open3D windows
+        self.is_viewing = False 
         
         self.setup_ui()
 
@@ -163,7 +173,13 @@ class PCQAAnnotatorUI:
             df_block_list = pd.read_csv(csv_path)
             ply_col = 'Ply_name' if 'Ply_name' in df_block_list.columns else df_block_list.columns[0]
             
-            ppc_dir = os.path.join(MAIN_DIR, "PointClouds", "PPC")
+            # --- DYNAMIC DISTORTED FOLDER ROUTING ---
+            if "LS_PCQA" in group or "LS_PCQA" in block:
+                ppc_dir = os.path.join(MAIN_DIR, "PointClouds", "LS_PCQA_PPC")
+            else:
+                ppc_dir = os.path.join(MAIN_DIR, "PointClouds", "PPC")
+            # ----------------------------------------
+            
             self.ppc_files = []
             
             # Safely clean names and ensure .ply extension exists
@@ -221,30 +237,35 @@ class PCQAAnnotatorUI:
         self.txt_desc.delete("1.0", tk.END)
 
     def find_reference_file(self, distorted_filename):
-        src_dir = os.path.join(MAIN_DIR, "PointClouds", "SRC")
+        # 1. Identify current active group and block from the UI dropdowns
+        group = self.combo_group.get()
+        block = self.combo_block.get()
         
-        # Split "p01_geocnn_r01.ply" by the underscore. 
-        # [0] grabs the very first part: "p01"
+        # 2. Route the source directory based on the selection
+        if "LS_PCQA" in group or "LS_PCQA" in block:
+            src_dir = os.path.join(MAIN_DIR, "PointClouds", "LS_PCQA")
+        else:
+            src_dir = os.path.join(MAIN_DIR, "PointClouds", "SRC")
+            
+        # 3. Split filename by underscore to get the exact reference target
         expected_src_base = distorted_filename.split('_')[0]
-        
-        # Reconstruct the expected path: PointClouds/SRC/p01.ply
         expected_src_path = os.path.join(src_dir, f"{expected_src_base}.ply")
         
-        # If that exact file exists, return it
+        # 4. Return exact match if found
         if os.path.exists(expected_src_path):
             return expected_src_path
             
-        # Fallback to the first available source file if something goes wrong
+        # Fallback to the first available source file if exact match fails
         src_files = glob.glob(os.path.join(src_dir, "*.ply"))
         return src_files[0] if src_files else None
 
     def visualize_current(self):
-        if self.current_index >= len(self.ppc_files):
+        # Prevent opening multiple overlapping 3D instances
+        if self.is_viewing or self.current_index >= len(self.ppc_files):
             return
             
         dist_path = self.ppc_files[self.current_index]
         
-        # ADD THIS CHECK: Warn if the distorted file is missing
         if not os.path.exists(dist_path):
             messagebox.showerror("Missing File", f"Cannot find the distorted file at:\n{dist_path}")
             return
@@ -255,39 +276,46 @@ class PCQAAnnotatorUI:
             messagebox.showerror("Reference Error", "Unable to pull matching model sequence out of SRC folder.")
             return
 
+        self.is_viewing = True
+
         pcd_ref = o3d.io.read_point_cloud(ref_path)
         pcd_dist = o3d.io.read_point_cloud(dist_path)
 
+        # Shifted left coordinates to 720 and 1330 so they sit side-by-side next to the UI
         vis1 = o3d.visualization.Visualizer()
-        vis1.create_window(window_name="Reference Source", width=700, height=550, left=50, top=50)
+        vis1.create_window(window_name="Reference Source Base", width=600, height=550, left=720, top=50)
         vis1.add_geometry(pcd_ref)
 
         vis2 = o3d.visualization.Visualizer()
-        vis2.create_window(window_name=f"Distorted: {os.path.basename(dist_path)}", width=700, height=550, left=780, top=50)
+        vis2.create_window(window_name=f"Distorted Vector: {os.path.basename(dist_path)}", width=600, height=550, left=1330, top=50)
         vis2.add_geometry(pcd_dist)
 
         vis1.get_render_option().point_size = 2.0
         vis2.get_render_option().point_size = 2.0
 
-        # Non-blocking render loops
-        while True:
+        # Run loop as long as the flag is True
+        while self.is_viewing:
             vis1.update_geometry(pcd_ref)
             vis2.update_geometry(pcd_dist)
             
+            # If the user clicks 'X' on the window, break the loop
             if not vis1.poll_events() or not vis2.poll_events():
+                self.is_viewing = False
                 break
                 
             vis1.update_renderer()
             vis2.update_renderer()
-            self.root.update() # Keeps master UI responsive
+            self.root.update()
 
         vis1.destroy_window()
         vis2.destroy_window()
 
     def save_and_next(self):
-        current_file = os.path.basename(self.ppc_files[self.current_index])
+        # 1. Flip the flag to False. This breaks the while loop in visualize_current 
+        # and instantly destroys the old Open3D windows.
+        self.is_viewing = False 
         
-        # Package metrics row
+        current_file = os.path.basename(self.ppc_files[self.current_index])
         row_data = {"Ply_name": current_file}
         for col, cb in self.dropdowns.items():
             row_data[col] = cb.get()
@@ -295,11 +323,9 @@ class PCQAAnnotatorUI:
         
         new_row_df = pd.DataFrame([row_data], columns=COLUMNS)
         
-        # Save or append record to block file sheet
         try:
             if os.path.exists(self.excel_save_path):
                 df_existing = pd.read_excel(self.excel_save_path)
-                # Eliminate existing duplicates if writing over a past submission line
                 df_existing = df_existing[df_existing["Ply_name"] != current_file]
                 df_final = pd.concat([df_existing, new_row_df], ignore_index=True)
             else:
@@ -307,12 +333,15 @@ class PCQAAnnotatorUI:
                 df_final = new_row_df
                 
             df_final.to_excel(self.excel_save_path, index=False)
-            
-            # Step loop tracking forward
             self.current_index += 1
             self.update_file_display()
+            
+            # 2. Wait 300 milliseconds for old windows to fully close, then auto-launch the next pair
+            if self.current_index < len(self.ppc_files):
+                self.root.after(300, self.visualize_current)
+                
         except Exception as e:
-            messagebox.showerror("File Error", f"Could not save metrics entry to Excel:\n{str(e)}")
+            messagebox.showerror("Database Lock Exception", f"Error outputting variables: {str(e)}")
 
 if __name__ == "__main__":
     root = tk.Tk()

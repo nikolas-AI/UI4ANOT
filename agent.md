@@ -37,22 +37,16 @@ The system automatically:
 
 # 2. Project Directory Structure
 
-The application relies on a fixed directory hierarchy. Relative paths should remain unchanged.
+The application relies on a fixed directory hierarchy. The architecture separates the **Basics** and **LS_PCQA** datasets at the source level, allowing each dataset to maintain its own reference and distorted point cloud repositories while sharing the same annotation interface.
 
 ```text
 main_folder/
 │
 ├── PointClouds/
-│   ├── SRC/
-│   │   ├── p01.ply
-│   │   ├── p02.ply
-│   │   └── ...
-│   │
-│   └── PPC/
-│       ├── p01_geocnn_r01.ply
-│       ├── p01_noise_r02.ply
-│       ├── p02_blur_r03.ply
-│       └── ...
+│   ├── SRC/                             # Reference point clouds for Basics datasets
+│   ├── PPC/                             # Distorted point clouds for Basics datasets
+│   ├── LS_PCQA/                         # Reference point clouds for LS_PCQA datasets
+│   └── LS_PCQA_PPC/                     # Distorted point clouds for LS_PCQA datasets
 │
 ├── LS_PCQA_block_files/
 │   ├── LS_PCQA_block_1.csv
@@ -74,13 +68,12 @@ main_folder/
 │
 ├── Calibration/
 │   ├── Calibration_Set_Basics.csv
-│   ├── Calibration_Set_LS_PCQA.csv
 │   ├── Calibration_Set_Basics_annotations.xlsx
+│   ├── Calibration_Set_LS_PCQA.csv
 │   └── Calibration_Set_LS_PCQA_annotations.xlsx
 │
 └── pcqa_annotator.py
 ```
-
 ---
 
 # 3. Annotation Scope
@@ -99,13 +92,51 @@ The application must **not** iterate over every file in the `PPC` directory. Ins
 
 ---
 
-# 4. Workflow
+# 3. Annotation Scope
 
-## 4.1 CSV-Driven Target Queue
+The application only operates on approved evaluation datasets.
 
-Each annotation session begins by selecting one dataset/block.
+## Supported Dataset Groups
 
-The corresponding CSV file contains the ordered list of distorted point clouds.
+| Dataset Folder | Supported Blocks | CSV Source |
+|----------------|------------------|------------|
+| `LS_PCQA_block_files` | Block 1, Block 6, Block 7 | `LS_PCQA_block_{#}.csv` |
+| `Basics_block_files` | Block 1, Block 5, Block 6, Block 7 | `basics_block_{#}.csv` |
+| `Calibration` | Calibration Set Basics, Calibration Set LS_PCQA | `{dataset_name}.csv` |
+
+The application must **not** iterate over every point cloud stored in the project directories. Instead, annotation targets are determined exclusively from the selected CSV file.
+
+---
+
+## 4. Workflow
+
+### 4.1 Dynamic Directory Routing
+
+The application does **not** use fixed paths for reference and distorted point clouds. Instead, it dynamically determines which directories to use based on the selected dataset.
+
+If the selected dataset name contains **`LS_PCQA`** (for example, `LS_PCQA_block_files` or `Calibration_Set_LS_PCQA`), the application must use:
+
+| Purpose | Directory |
+|---------|-----------|
+| Reference Point Clouds | `PointClouds/LS_PCQA/` |
+| Distorted Point Clouds | `PointClouds/LS_PCQA_PPC/` |
+
+For all other datasets (including all **Basics** blocks and **Calibration_Set_Basics**), the application must use:
+
+| Purpose | Directory |
+|---------|-----------|
+| Reference Point Clouds | `PointClouds/SRC/` |
+| Distorted Point Clouds | `PointClouds/PPC/` |
+
+This routing decision should occur automatically whenever a dataset is selected. Users should never need to manually modify source paths.
+
+---
+
+### 4.2 CSV-Driven Target Queue
+
+Each annotation session begins by selecting a dataset/block.
+
+The corresponding CSV file defines the ordered annotation queue.
 
 Example:
 
@@ -113,7 +144,7 @@ Example:
 LS_PCQA_block_1.csv
 ```
 
-The application reads the **`Ply_name`** column and constructs an ordered annotation queue.
+The application reads the **`Ply_name`** column and constructs an ordered list of distorted point cloud filenames.
 
 Example:
 
@@ -124,19 +155,15 @@ p02_blur_r01.ply
 ...
 ```
 
-Only these files are loaded during the annotation session.
+Only the filenames listed in the CSV are processed during the annotation session. The application must never determine annotation order by scanning the point cloud directories.
 
 ---
 
-## 4.2 Reference Point Cloud Resolution
+### 4.3 Reference Point Cloud Resolution
 
-Each distorted point cloud has a matching reference model stored in:
+Each distorted point cloud has a matching reference model.
 
-```text
-PointClouds/SRC/
-```
-
-The mapping is determined by extracting the filename prefix before the first underscore.
+The application extracts the prefix before the first underscore in the distorted filename to determine the corresponding reference filename.
 
 Example:
 
@@ -150,30 +177,29 @@ Reference:
 p01.ply
 ```
 
-Algorithm:
+Reference filename generation:
 
-```
+```python
 filename.split("_")[0] + ".ply"
 ```
 
-This reference model is automatically loaded alongside the distorted point cloud.
+The generated filename is then searched within the reference directory selected during the Dynamic Directory Routing step.
 
 ---
 
-## 4.3 Incremental Session Resumption
+### 4.4 Incremental Session Resumption
 
-To prevent annotation loss after application closure or interruption, the application resumes automatically.
+To prevent annotation loss after application closure or interruption, the application automatically resumes incomplete annotation sessions.
 
 Workflow:
 
-1. Open the existing annotation workbook.
-2. Read the completed `Ply_name` entries.
-3. Compare them against the CSV annotation queue.
-4. Locate the first unannotated point cloud.
-5. Resume rendering from that position.
+1. Open the annotation workbook associated with the selected dataset.
+2. Read all previously completed `Ply_name` entries.
+3. Compare them against the ordered CSV queue.
+4. Identify the first filename that has not yet been annotated.
+5. Resume rendering from that point.
 
-This enables crash-safe annotation without duplicate entries.
-
+This enables crash-safe annotation while preserving the original ordering defined by the CSV.
 ---
 
 # 5. Excel Database Schema
@@ -298,21 +324,19 @@ This prevents the GUI from freezing while maintaining interactive rendering.
 
 ---
 
-# 9. Key Functional Requirements
-
 The application shall:
 
-- load annotation targets from CSV files
-- never scan the PPC directory directly for annotation order
-- automatically resolve source point clouds
-- display reference and distorted models simultaneously
-- record structured annotations into Excel
-- automatically create annotation workbooks if absent
-- resume unfinished annotation sessions
-- preserve annotation order defined by the CSV
-- maintain a responsive GUI during rendering
-- support all approved dataset groups
-
+- dynamically select the correct point cloud directories based on the active dataset
+- load annotation targets exclusively from CSV files
+- never determine annotation order by scanning point cloud directories
+- automatically resolve reference point clouds from distorted filenames
+- display reference and distorted point clouds simultaneously using Open3D
+- record structured annotations into Excel workbooks
+- automatically create annotation workbooks if they do not already exist
+- resume interrupted annotation sessions without duplicating entries
+- preserve the annotation order defined by the CSV file
+- maintain a responsive Tkinter interface during Open3D rendering
+- support all approved Basics, LS_PCQA, and Calibration datasets
 ---
 
 # 10. Technologies
