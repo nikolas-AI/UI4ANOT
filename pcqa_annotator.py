@@ -8,7 +8,7 @@ import open3d as o3d
 import ctypes
 try:
     # This forces Tkinter to render sharply and prevents Open3D from shrinking it later
-    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
 except Exception:
     pass
 
