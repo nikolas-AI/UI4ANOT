@@ -203,7 +203,8 @@ class PCQAAnnotatorUI:
         # 3. Read existing progress from the output Excel sheet to resume where you left off
         if os.path.exists(self.excel_save_path):
             try:
-                df_existing = pd.read_excel(self.excel_save_path)
+                # ADDED keep_default_na=False to prevent erasing "None"
+                df_existing = pd.read_excel(self.excel_save_path, keep_default_na=False)
                 annotated_names = df_existing["Ply_name"].astype(str).tolist()
                 
                 while self.current_index < len(self.ppc_files):
@@ -325,7 +326,8 @@ class PCQAAnnotatorUI:
         
         try:
             if os.path.exists(self.excel_save_path):
-                df_existing = pd.read_excel(self.excel_save_path)
+                # ADDED keep_default_na=False here as well
+                df_existing = pd.read_excel(self.excel_save_path, keep_default_na=False)
                 df_existing = df_existing[df_existing["Ply_name"] != current_file]
                 df_final = pd.concat([df_existing, new_row_df], ignore_index=True)
             else:
