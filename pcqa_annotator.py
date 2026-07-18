@@ -161,17 +161,19 @@ class PCQAAnnotatorUI:
         # 2. Read the CSV to get the list of files to annotate
         try:
             df_block_list = pd.read_csv(csv_path)
-            # Find the column containing the ply names (checks for 'Ply_name' or uses the 1st column)
             ply_col = 'Ply_name' if 'Ply_name' in df_block_list.columns else df_block_list.columns[0]
             
-            # Map the filenames to full paths inside the PointClouds/PPC directory
             ppc_dir = os.path.join(MAIN_DIR, "PointClouds", "PPC")
+            self.ppc_files = []
             
-            # Clean names and build full paths
-            self.ppc_files = [
-                os.path.join(ppc_dir, str(name).strip()) 
-                for name in df_block_list[ply_col].dropna().unique()
-            ]
+            # Safely clean names and ensure .ply extension exists
+            for name in df_block_list[ply_col].dropna().unique():
+                clean_name = str(name).strip()
+                if not clean_name.lower().endswith('.ply'):
+                    clean_name += '.ply'
+                
+                self.ppc_files.append(os.path.join(ppc_dir, clean_name))
+                
         except Exception as e:
             messagebox.showerror("Error", f"Failed to read block CSV list:\n{str(e)}")
             return
@@ -241,10 +243,16 @@ class PCQAAnnotatorUI:
             return
             
         dist_path = self.ppc_files[self.current_index]
+        
+        # ADD THIS CHECK: Warn if the distorted file is missing
+        if not os.path.exists(dist_path):
+            messagebox.showerror("Missing File", f"Cannot find the distorted file at:\n{dist_path}")
+            return
+            
         ref_path = self.find_reference_file(os.path.basename(dist_path))
         
         if not ref_path or not os.path.exists(ref_path):
-            messagebox.showerror("Error", "Could not locate matching reference source cloud in SRC folder.")
+            messagebox.showerror("Reference Error", "Unable to pull matching model sequence out of SRC folder.")
             return
 
         pcd_ref = o3d.io.read_point_cloud(ref_path)
