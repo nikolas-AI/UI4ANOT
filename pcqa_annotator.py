@@ -28,7 +28,7 @@ ALLOWED_BLOCKS = {
 RATING_OPTIONS = ["None", "Low", "Medium", "High", "Severe"]
 TEXTURE_OPTIONS = [
     "clearly identifiable", 
-    "strongly distorted but identifiable", 
+    "slightly distorted but identifiable", 
     "distorted but identifiable", 
     "barely identifiable", 
     "completely damaged"
@@ -130,8 +130,14 @@ class PCQAAnnotatorUI:
         frame_nav = ttk.Frame(self.root, padding=10)
         frame_nav.pack(fill="x", padx=15, pady=5)
         
+        self.btn_prev = ttk.Button(frame_nav, text="◀ Save & Previous File", command=self.save_and_previous, state="disabled")
+        self.btn_prev.pack(fill="x", ipady=5, pady=(0, 4))
+
         self.btn_submit = ttk.Button(frame_nav, text="Save & Next File", command=self.save_and_next, state="disabled")
-        self.btn_submit.pack(fill="x", ipady=5)
+        self.btn_submit.pack(fill="x", ipady=5, pady=(0, 4))
+
+        self.btn_restart = ttk.Button(frame_nav, text="Restart / Review Block", command=self.restart_block_review, state="disabled")
+        self.btn_restart.pack(fill="x", ipady=5)
 
     def update_block_options(self, event=None):
         group = self.combo_group.get()
@@ -220,22 +226,70 @@ class PCQAAnnotatorUI:
         self.btn_submit.config(state="normal")
         self.update_file_display()
 
+    def load_existing_annotations(self):
+        if not os.path.exists(self.excel_save_path):
+            return {}
+
+        try:
+            df_existing = pd.read_excel(self.excel_save_path, keep_default_na=False)
+            if df_existing.empty or "Ply_name" not in df_existing.columns:
+                return {}
+
+            annotations = {}
+            for _, row in df_existing.iterrows():
+                name = str(row.get("Ply_name", "")).strip()
+                if name:
+                    annotations[name] = row.to_dict()
+            return annotations
+        except Exception:
+            return {}
+
+    def populate_form_from_row(self, row_data):
+        if row_data is None:
+            row_data = {}
+
+        for col, cb in self.dropdowns.items():
+            value = row_data.get(col, "")
+            if value in cb["values"]:
+                cb.set(value)
+            else:
+                cb.set(cb["values"][0])
+
+        desc_value = row_data.get("Quality Description", "")
+        self.txt_desc.delete("1.0", tk.END)
+        self.txt_desc.insert("1.0", desc_value)
+
     def update_file_display(self):
+        if not self.ppc_files:
+            self.lbl_progress.config(text="Progress: 0 / 0")
+            self.lbl_file.config(text="File: None Loaded")
+            self.btn_view.config(state="disabled")
+            self.btn_submit.config(state="disabled")
+            self.btn_prev.config(state="disabled")
+            self.btn_restart.config(state="disabled")
+            return
+
         if self.current_index >= len(self.ppc_files):
             self.lbl_progress.config(text=f"Progress: {len(self.ppc_files)} / {len(self.ppc_files)}")
             self.lbl_file.config(text="🎉 All point clouds in this path have been annotated!")
             self.btn_view.config(state="disabled")
             self.btn_submit.config(state="disabled")
+            self.btn_prev.config(state="normal")
+            self.btn_restart.config(state="normal")
             return
             
         self.lbl_progress.config(text=f"Progress: {self.current_index + 1} / {len(self.ppc_files)}")
         current_file = os.path.basename(self.ppc_files[self.current_index])
         self.lbl_file.config(text=f"File: {current_file}")
-        
-        # Clear/Reset inputs to defaults
-        for cb in self.dropdowns.values():
-            cb.set(cb['values'][0])
-        self.txt_desc.delete("1.0", tk.END)
+
+        annotations = self.load_existing_annotations()
+        existing_row = annotations.get(current_file)
+        self.populate_form_from_row(existing_row)
+
+        self.btn_view.config(state="normal")
+        self.btn_submit.config(state="normal")
+        self.btn_prev.config(state="normal" if self.current_index > 0 else "disabled")
+        self.btn_restart.config(state="normal")
 
     def find_reference_file(self, distorted_filename):
         # 1. Identify current active group and block from the UI dropdowns
@@ -284,11 +338,11 @@ class PCQAAnnotatorUI:
 
         # Shifted left coordinates to 720 and 1330 so they sit side-by-side next to the UI
         vis1 = o3d.visualization.Visualizer()
-        vis1.create_window(window_name="Reference Source Base", width=600, height=550, left=720, top=50)
+        vis1.create_window(window_name="Reference Source Base", width=600, height=1000, left=720, top=50)
         vis1.add_geometry(pcd_ref)
 
         vis2 = o3d.visualization.Visualizer()
-        vis2.create_window(window_name=f"Distorted Vector: {os.path.basename(dist_path)}", width=600, height=550, left=1330, top=50)
+        vis2.create_window(window_name=f"Distorted Vector: {os.path.basename(dist_path)}", width=600, height=1000, left=1330, top=50)
         vis2.add_geometry(pcd_dist)
 
         vis1.get_render_option().point_size = 2.0
@@ -311,39 +365,70 @@ class PCQAAnnotatorUI:
         vis1.destroy_window()
         vis2.destroy_window()
 
-    def save_and_next(self):
-        # 1. Flip the flag to False. This breaks the while loop in visualize_current 
-        # and instantly destroys the old Open3D windows.
-        self.is_viewing = False 
-        
+    def save_current_annotation(self):
+        if not self.ppc_files or self.current_index >= len(self.ppc_files):
+            return False
+
         current_file = os.path.basename(self.ppc_files[self.current_index])
         row_data = {"Ply_name": current_file}
         for col, cb in self.dropdowns.items():
             row_data[col] = cb.get()
         row_data["Quality Description"] = self.txt_desc.get("1.0", "end-1c").strip()
-        
+
         new_row_df = pd.DataFrame([row_data], columns=COLUMNS)
-        
+
         try:
+            os.makedirs(os.path.dirname(self.excel_save_path), exist_ok=True)
+
             if os.path.exists(self.excel_save_path):
-                # ADDED keep_default_na=False here as well
                 df_existing = pd.read_excel(self.excel_save_path, keep_default_na=False)
-                df_existing = df_existing[df_existing["Ply_name"] != current_file]
-                df_final = pd.concat([df_existing, new_row_df], ignore_index=True)
+                if "Ply_name" not in df_existing.columns:
+                    df_existing = pd.DataFrame(columns=COLUMNS)
+                else:
+                    df_existing = df_existing[df_existing["Ply_name"].astype(str) != current_file]
             else:
-                os.makedirs(os.path.dirname(self.excel_save_path), exist_ok=True)
-                df_final = new_row_df
-                
+                df_existing = pd.DataFrame(columns=COLUMNS)
+
+            df_final = pd.concat([df_existing, new_row_df], ignore_index=True)
+            df_final = df_final.reindex(columns=COLUMNS)
             df_final.to_excel(self.excel_save_path, index=False)
-            self.current_index += 1
-            self.update_file_display()
-            
-            # 2. Wait 300 milliseconds for old windows to fully close, then auto-launch the next pair
-            if self.current_index < len(self.ppc_files):
-                self.root.after(300, self.visualize_current)
-                
+            return True
+
         except Exception as e:
             messagebox.showerror("Database Lock Exception", f"Error outputting variables: {str(e)}")
+            return False
+
+    def save_and_next(self):
+        # 1. Flip the flag to False. This breaks the while loop in visualize_current 
+        # and instantly destroys the old Open3D windows.
+        self.is_viewing = False
+
+        if not self.save_current_annotation():
+            return
+
+        self.current_index += 1
+        self.update_file_display()
+
+        # 2. Wait 300 milliseconds for old windows to fully close, then auto-launch the next pair
+        if self.current_index < len(self.ppc_files):
+            self.root.after(300, self.visualize_current)
+
+    def save_and_previous(self):
+        self.is_viewing = False
+
+        if not self.save_current_annotation():
+            return
+
+        if self.current_index > 0:
+            self.current_index -= 1
+            self.update_file_display()
+            self.root.after(300, self.visualize_current)
+
+    def restart_block_review(self):
+        self.is_viewing = False
+        self.current_index = 0
+        self.update_file_display()
+        self.root.after(300, self.visualize_current)
 
 if __name__ == "__main__":
     root = tk.Tk()
