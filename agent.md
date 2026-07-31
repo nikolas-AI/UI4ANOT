@@ -200,6 +200,20 @@ Workflow:
 5. Resume rendering from that point.
 
 This enables crash-safe annotation while preserving the original ordering defined by the CSV.
+
+### 4.5 Review and Navigation Controls
+
+The application now supports flexible review of previously annotated items during a session.
+
+Supported behaviors:
+
+1. Users can move backward to previously viewed items using a dedicated Previous button.
+2. When returning to a file that already has an annotation entry, the form automatically reloads the saved ratings and description from the workbook.
+3. Users can restart or revisit the block from the beginning without deleting previously saved annotations.
+4. Saving an annotation updates the existing record for the same `Ply_name` instead of creating duplicates, allowing corrections and re-annotations to be preserved cleanly.
+
+This makes the workflow suitable for iterative review, correction, and confirmation of earlier annotations.
+
 ---
 
 # 5. Excel Database Schema
@@ -233,7 +247,7 @@ The column names must remain unchanged.
 Exactly one of:
 
 - clearly identifiable
-- strongly distorted but identifiable
+- slightly distorted but identifiable
 - distorted but identifiable
 - barely identifiable
 - completely damaged
@@ -278,8 +292,9 @@ The interface consists of:
 - annotation controls
 - dropdown menus
 - free-text description field
-- navigation controls
-- automatic save functionality
+- navigation controls for moving forward and backward through the block
+- review controls for restarting or revisiting the current block
+- automatic save functionality with update-preserving workbook writes
 
 Layout should be constructed using the Tkinter `grid()` geometry manager.
 
@@ -334,6 +349,8 @@ The application shall:
 - record structured annotations into Excel workbooks
 - automatically create annotation workbooks if they do not already exist
 - resume interrupted annotation sessions without duplicating entries
+- reload previously saved values when revisiting an item
+- update existing annotation records instead of creating duplicates
 - preserve the annotation order defined by the CSV file
 - maintain a responsive Tkinter interface during Open3D rendering
 - support all approved Basics, LS_PCQA, and Calibration datasets
