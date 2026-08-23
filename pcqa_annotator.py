@@ -1,5 +1,6 @@
 import os
 import glob
+import numpy as np
 import pandas as pd
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -348,6 +349,21 @@ class PCQAAnnotatorUI:
         vis1.get_render_option().point_size = 2.0
         vis2.get_render_option().point_size = 2.0
 
+        ref_view = vis1.get_view_control()
+        dist_view = vis2.get_view_control()
+        dist_view.convert_from_pinhole_camera_parameters(
+            ref_view.convert_to_pinhole_camera_parameters(),
+            allow_arbitrary=True
+        )
+
+        def camera_signature(camera_parameters):
+            intrinsic = np.asarray(camera_parameters.intrinsic.intrinsic_matrix)
+            extrinsic = np.asarray(camera_parameters.extrinsic)
+            return tuple(intrinsic.ravel()), tuple(extrinsic.ravel())
+
+        last_ref_signature = camera_signature(ref_view.convert_to_pinhole_camera_parameters())
+        last_dist_signature = camera_signature(dist_view.convert_to_pinhole_camera_parameters())
+
         # Run loop as long as the flag is True
         while self.is_viewing:
             vis1.update_geometry(pcd_ref)
@@ -357,6 +373,30 @@ class PCQAAnnotatorUI:
             if not vis1.poll_events() or not vis2.poll_events():
                 self.is_viewing = False
                 break
+
+            current_ref_parameters = ref_view.convert_to_pinhole_camera_parameters()
+            current_dist_parameters = dist_view.convert_to_pinhole_camera_parameters()
+            current_ref_signature = camera_signature(current_ref_parameters)
+            current_dist_signature = camera_signature(current_dist_parameters)
+
+            ref_changed = current_ref_signature != last_ref_signature
+            dist_changed = current_dist_signature != last_dist_signature
+
+            if ref_changed and not dist_changed:
+                dist_view.convert_from_pinhole_camera_parameters(
+                    current_ref_parameters,
+                    allow_arbitrary=True
+                )
+                current_dist_signature = current_ref_signature
+            elif dist_changed and not ref_changed:
+                ref_view.convert_from_pinhole_camera_parameters(
+                    current_dist_parameters,
+                    allow_arbitrary=True
+                )
+                current_ref_signature = current_dist_signature
+
+            last_ref_signature = current_ref_signature
+            last_dist_signature = current_dist_signature
                 
             vis1.update_renderer()
             vis2.update_renderer()
