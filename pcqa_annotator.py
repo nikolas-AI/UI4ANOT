@@ -54,6 +54,8 @@ class PCQAAnnotatorUI:
         
         # Control flag to manage Open3D windows
         self.is_viewing = False 
+        self.vis_ref = None
+        self.vis_dist = None
         
         self.setup_ui()
 
@@ -88,6 +90,14 @@ class PCQAAnnotatorUI:
         
         self.btn_view = ttk.Button(self.frame_info, text="▶ View / Refresh 3D Models", command=self.visualize_current, state="disabled")
         self.btn_view.pack(fill="x", pady=5)
+
+        self.btn_reset_view = ttk.Button(
+            self.frame_info,
+            text="Reset 3D Viewers",
+            command=self.reset_viewers,
+            state="disabled"
+        )
+        self.btn_reset_view.pack(fill="x", pady=2)
 
         # --- Annotation Form Frame ---
         self.frame_form = ttk.LabelFrame(self.root, text=" 3. Distortions & Attributes ", padding=10)
@@ -265,6 +275,7 @@ class PCQAAnnotatorUI:
             self.lbl_progress.config(text="Progress: 0 / 0")
             self.lbl_file.config(text="File: None Loaded")
             self.btn_view.config(state="disabled")
+            self.btn_reset_view.config(state="disabled")
             self.btn_submit.config(state="disabled")
             self.btn_prev.config(state="disabled")
             self.btn_restart.config(state="disabled")
@@ -274,6 +285,7 @@ class PCQAAnnotatorUI:
             self.lbl_progress.config(text=f"Progress: {len(self.ppc_files)} / {len(self.ppc_files)}")
             self.lbl_file.config(text="🎉 All point clouds in this path have been annotated!")
             self.btn_view.config(state="disabled")
+            self.btn_reset_view.config(state="disabled")
             self.btn_submit.config(state="disabled")
             self.btn_prev.config(state="normal")
             self.btn_restart.config(state="normal")
@@ -288,6 +300,7 @@ class PCQAAnnotatorUI:
         self.populate_form_from_row(existing_row)
 
         self.btn_view.config(state="normal")
+        self.btn_reset_view.config(state="normal")
         self.btn_submit.config(state="normal")
         self.btn_prev.config(state="normal" if self.current_index > 0 else "disabled")
         self.btn_restart.config(state="normal")
@@ -339,10 +352,12 @@ class PCQAAnnotatorUI:
 
         # Shifted left coordinates to 720 and 1330 so they sit side-by-side next to the UI
         vis1 = o3d.visualization.Visualizer()
+        self.vis_ref = vis1
         vis1.create_window(window_name="Reference Source Base", width=600, height=1000, left=720, top=50)
         vis1.add_geometry(pcd_ref)
 
         vis2 = o3d.visualization.Visualizer()
+        self.vis_dist = vis2
         vis2.create_window(window_name=f"Distorted Vector: {os.path.basename(dist_path)}", width=600, height=1000, left=1330, top=50)
         vis2.add_geometry(pcd_dist)
 
@@ -402,8 +417,27 @@ class PCQAAnnotatorUI:
             vis2.update_renderer()
             self.root.update()
 
-        vis1.destroy_window()
-        vis2.destroy_window()
+        self.close_viewers()
+
+    def reset_viewers(self):
+        if not self.ppc_files or self.current_index >= len(self.ppc_files):
+            return
+
+        self.is_viewing = False
+        self.close_viewers()
+        self.root.after(150, self.visualize_current)
+
+    def close_viewers(self):
+        for viewer_name in ("vis_ref", "vis_dist"):
+            viewer = getattr(self, viewer_name)
+            if viewer is None:
+                continue
+
+            try:
+                viewer.destroy_window()
+            except Exception:
+                pass
+            setattr(self, viewer_name, None)
 
     def save_current_annotation(self):
         if not self.ppc_files or self.current_index >= len(self.ppc_files):

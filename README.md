@@ -7,6 +7,8 @@ A desktop application for **Point Cloud Quality Assessment (PCQA)** annotation t
 ## Features
 
 - Interactive side-by-side visualization of reference and distorted point clouds using **Open3D**
+- Camera synchronization between the reference and distorted viewers for easier comparison
+- Reset control to recover blank, stuck, or misaligned 3D viewers
 - Desktop annotation interface built with **Tkinter**
 - CSV-driven annotation workflow
 - Automatic reference point cloud resolution
@@ -60,9 +62,15 @@ Each annotation session is driven by the corresponding CSV file rather than scan
 3. Point cloud filenames are read from the **`Ply_name`** column.
 4. The corresponding reference model is automatically located.
 5. Reference and distorted point clouds are displayed simultaneously.
-6. Complete the quality assessment using the annotation form.
-7. Results are automatically written to an Excel workbook.
-8. If the application is closed, progress is restored automatically the next time the dataset is opened.
+6. Camera movement in one viewer is synchronized with the other viewer when possible.
+7. If either viewer becomes blank, stuck, or misaligned, click **Reset 3D Viewers** to close and recreate both windows with fresh camera views.
+8. Complete the quality assessment using the annotation form.
+9. Results are automatically written to an Excel workbook.
+10. If the application is closed, progress is restored automatically the next time the dataset is opened.
+
+### Viewer Recovery
+
+The **Reset 3D Viewers** control reloads the current reference and distorted point clouds and resets their camera state. It does not change the current annotation form, delete workbook rows, or reset annotation progress. Use it whenever an Open3D window stops responding, displays no geometry, or loses alignment with the other viewer.
 
 ---
 

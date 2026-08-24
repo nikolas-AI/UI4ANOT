@@ -302,7 +302,17 @@ Two visualization windows are displayed simultaneously:
 - Reference point cloud
 - Distorted point cloud
 
-Both remain synchronized with the annotation interface.
+The viewers support camera synchronization so that rotation, zoom, and pan changes can be propagated between the reference and distorted point clouds for side-by-side comparison. Synchronization should be lightweight and must not continuously overwrite a user's interaction when neither camera has changed.
+
+The interface also provides a **Reset 3D Viewers** recovery control. When used, it must:
+
+1. stop the current visualization loop;
+2. close both Open3D windows;
+3. release the stored viewer instances;
+4. recreate both windows for the current point-cloud pair; and
+5. initialize fresh camera views.
+
+Resetting the viewers must not modify the current annotation form, annotation index, Excel workbook, or previously saved ratings. It is intended to recover from a blank, stuck, or misaligned Open3D window without restarting the annotation session.
 
 The rendering loop must remain non-blocking.
 
@@ -331,6 +341,8 @@ The application shall:
 - never determine annotation order by scanning point cloud directories
 - automatically resolve reference point clouds from distorted filenames
 - display reference and distorted point clouds simultaneously using Open3D
+- synchronize camera movement between the two viewers when the viewer state permits
+- provide a reset action that recreates both viewers without changing annotation data
 - record structured annotations into Excel workbooks
 - automatically create annotation workbooks if they do not already exist
 - resume interrupted annotation sessions without duplicating entries
